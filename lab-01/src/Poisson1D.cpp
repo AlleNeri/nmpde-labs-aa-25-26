@@ -278,7 +278,7 @@ Poisson1D::compute_error(const VectorTools::NormType &norm_type,
   // The error is an integral, and we approximate that integral using a
   // quadrature formula. To make sure we are accurate enough, we use a
   // quadrature formula with one node more than what we used in assembly.
-  const QGauss<dim> quadrature_error = QGauss<dim>(r + 2);
+  const QGaussSimplex<dim> quadrature_error(r + 2);
 
   // First we compute the norm on each element, and store it in a vector.
   Vector<double> error_per_cell(mesh.n_active_cells());
