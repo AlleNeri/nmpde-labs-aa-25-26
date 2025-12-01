@@ -13,3 +13,7 @@ deal_ii_setup_target(exercise-01)
 add_executable(exercise-02 src/exercise-02.cpp)
 target_link_libraries(exercise-02 Poisson1D)
 deal_ii_setup_target(exercise-02)
+
+add_executable(exercise-programmable-f src/exercise-programmable-f.cpp)
+target_link_libraries(exercise-programmable-f Poisson1D)
+deal_ii_setup_target(exercise-programmable-f)

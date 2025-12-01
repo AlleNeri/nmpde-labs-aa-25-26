@@ -35,9 +35,15 @@ class Poisson1D
 {
 public:
   // Physical dimension (1D, 2D, 3D)
+  // This allows to do "dimensional independent programming" by using it
+  // instead of hardcoding the dimension everywhere.
   static constexpr unsigned int dim = 1;
 
   // Constructor.
+  // Many of the objects that are going to use the parameters passed to the
+  // constructor are going to be stored as unique_ptr, since their type depends
+  // on the parameters (otherwise we would need to initialize them even if we
+  // don't know all the information yet).
   Poisson1D(const unsigned int                              &N_el_,
             const unsigned int                              &r_,
             const std::function<double(const Point<dim> &)> &mu_,
@@ -70,19 +76,19 @@ public:
                 const Function<dim>         &exact_solution) const;
 
 protected:
-  // Number of elements.
+  // Number of elements (mesh divisions).
   const unsigned int N_el;
 
-  // Polynomial degree.
+  // Polynomial degree (of the FE space).
   const unsigned int r;
 
   // Diffusion coefficient.
   std::function<double(const Point<dim> &)> mu;
 
-  // Forcing term.
+  // Forcing term (right-hand side).
   std::function<double(const Point<dim> &)> f;
 
-  // Triangulation.
+  // Triangulation (the mash, it could also be another type).
   Triangulation<dim> mesh;
 
   // Finite element space.
@@ -103,18 +109,20 @@ protected:
   std::unique_ptr<Quadrature<dim>> quadrature;
 
   // DoF handler.
+  // This creates a "bridge" between the mesh and the finite element.
+  // In some sense, it represents the V_h space.
   DoFHandler<dim> dof_handler;
 
-  // Sparsity pattern.
+  // Sparsity pattern of the stiffness matrix.
   SparsityPattern sparsity_pattern;
 
-  // System matrix.
+  // System stiffness matrix (A).
   SparseMatrix<double> system_matrix;
 
-  // System right-hand side.
+  // System right-hand side (f).
   Vector<double> system_rhs;
 
-  // System solution.
+  // System solution (u).
   Vector<double> solution;
 };
 
