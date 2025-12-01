@@ -1,4 +1,6 @@
-#include "DiffusionReaction.hpp"
+#include "my-DiffusionReaction.hpp"
+
+using namespace myDiffusionReaction;
 
 void
 DiffusionReaction::setup()
@@ -108,27 +110,33 @@ DiffusionReaction::assemble()
 
       for (unsigned int q = 0; q < n_q; ++q)
         {
-          const double mu_loc    = mu(fe_values.quadrature_point(q));
-          const double sigma_loc = sigma(fe_values.quadrature_point(q));
-          const double f_loc     = f(fe_values.quadrature_point(q));
+		  // As for mu, and f, we pre-evaluate sigma at the quadrature point.
+          const double mu_loc	 = mu(fe_values.quadrature_point(q));
+          const double f_loc	 = f(fe_values.quadrature_point(q));
+		  const double sigma_loc = sigma(fe_values.quadrature_point(q));
 
           for (unsigned int i = 0; i < dofs_per_cell; ++i)
             {
               for (unsigned int j = 0; j < dofs_per_cell; ++j)
                 {
-                  cell_matrix(i, j) += mu_loc *                     //
-                                       fe_values.shape_grad(i, q) * //
-                                       fe_values.shape_grad(j, q) * //
-                                       fe_values.JxW(q);
-
-                  cell_matrix(i, j) += sigma_loc *                   //
-                                       fe_values.shape_value(i, q) * //
-                                       fe_values.shape_value(j, q) * //
-                                       fe_values.JxW(q);
+				  // Since we are working in a 2D space, the product between the
+				  // two gradients in the following lines, is a dot product.
+				  // The `*` operator is appropriately overloaded in deal.II to
+				  // handle this case (the explicit function which computes this
+				  // operation is `scalar_product`).
+                  cell_matrix(i, j) += ((  // Diffusion term
+										mu_loc *
+										fe_values.shape_grad(i, q) *
+										fe_values.shape_grad(j, q)
+									   ) + (  // Reaction term
+										sigma_loc *
+										fe_values.shape_value(i, q) *
+										fe_values.shape_value(j, q)
+									   )) * fe_values.JxW(q); //Collected weight
                 }
 
-              cell_rhs(i) += f_loc *                       //
-                             fe_values.shape_value(i, q) * //
+              cell_rhs(i) += f_loc *
+                             fe_values.shape_value(i, q) *
                              fe_values.JxW(q);
             }
         }
@@ -142,13 +150,13 @@ DiffusionReaction::assemble()
   // Dirichlet boundary conditions.
   {
     std::map<types::global_dof_index, double> boundary_values;
-    Functions::ZeroFunction<dim>              bc_function;
+    Functions::ZeroFunction<dim>			  bc_function;
 
     std::map<types::boundary_id, const Function<dim> *> boundary_functions;
     boundary_functions[0] = &bc_function;
     boundary_functions[1] = &bc_function;
-    boundary_functions[2] = &bc_function;
-    boundary_functions[3] = &bc_function;
+	boundary_functions[2] = &bc_function;
+	boundary_functions[3] = &bc_function;
 
     VectorTools::interpolate_boundary_values(dof_handler,
                                              boundary_functions,
@@ -164,9 +172,9 @@ DiffusionReaction::solve()
 {
   std::cout << "===============================================" << std::endl;
 
-  ReductionControl solver_control(/* maxiter = */ 1000,
+  ReductionControl solver_control(/* maxiter = */	1000,
                                   /* tolerance = */ 1.0e-16,
-                                  /* reduce = */ 1.0e-6);
+                                  /* reduce = */	1.0e-6);
 
   SolverCG<Vector<double>> solver(solver_control);
 
@@ -186,8 +194,6 @@ DiffusionReaction::output() const
   data_out.add_data_vector(dof_handler, solution, "solution");
   data_out.build_patches();
 
-  // Use std::filesystem to construct the output file name based on the
-  // mesh file name.
   const std::filesystem::path mesh_path(mesh_file_name);
   const std::string           output_file_name =
     "output-" + mesh_path.stem().string() + ".vtk";
@@ -197,32 +203,4 @@ DiffusionReaction::output() const
   std::cout << "Output written to " << output_file_name << std::endl;
 
   std::cout << "===============================================" << std::endl;
-}
-
-double
-DiffusionReaction::compute_error(const VectorTools::NormType &norm_type,
-                                 const Function<dim> &exact_solution) const
-{
-  const QGaussSimplex<dim> quadrature_error(r + 2);
-
-  // For triangular meshes, we need to explicitly provide a Mapping (the mapping
-  // between the reference element and the individual elements in the mesh) to
-  // integrate_difference. These two commands construct the most basic linear
-  // mapping.
-  FE_SimplexP<dim> fe_linear(1);
-  MappingFE        mapping(fe_linear);
-
-  Vector<double> error_per_cell(mesh.n_active_cells());
-  VectorTools::integrate_difference(mapping,
-                                    dof_handler,
-                                    solution,
-                                    exact_solution,
-                                    error_per_cell,
-                                    quadrature_error,
-                                    norm_type);
-
-  const double error =
-    VectorTools::compute_global_error(mesh, error_per_cell, norm_type);
-
-  return error;
 }

@@ -30,47 +30,27 @@
 
 using namespace dealii;
 
+namespace myDiffusionReaction {
 /**
  * Class managing the differential problem.
  */
-class Poisson2D
+class DiffusionReaction
 {
 public:
   // Physical dimension (1D, 2D, 3D)
   static constexpr unsigned int dim = 2;
 
-  // Dirichlet boundary function.
-  // This function represents the function g which enforces the Dirichlet BCs
-  // for this specific problem. This is implemented as a dealii::Function<dim>,
-  // instead of e.g. a lambda function, because this allows to use dealii
-  // boundary utilities directly.
-  class FunctionG : public Function<dim>
-  {
-  public:
-    // Constructor.
-    FunctionG() = default;
-
-    // Evaluation.
-    virtual double
-    value(const Point<dim> &p,
-          const unsigned int /*component*/ = 0) const override
-    {
-	  // This function simply performs g(x,y) = x + y
-      return p[0] + p[1];
-    }
-  };
-
   // Constructor.
-  Poisson2D(const std::string                               &mesh_file_name_,
+  DiffusionReaction(const std::string						&mesh_file_name_,
             const unsigned int                              &r_,
             const std::function<double(const Point<dim> &)> &mu_,
-            const std::function<double(const Point<dim> &)> &f_,
-            const std::function<double(const Point<dim> &)> &h_)
+			const std::function<double(const Point<dim> &)> &sigma_,
+            const std::function<double(const Point<dim> &)> &f_)
     : mesh_file_name(mesh_file_name_)
     , r(r_)
     , mu(mu_)
+	, sigma(sigma_)
     , f(f_)
-    , h(h_)
   {}
 
   // Initialization.
@@ -99,11 +79,11 @@ protected:
   // Diffusion coefficient.
   std::function<double(const Point<dim> &)> mu;
 
+  // Reaction coefficient.
+  std::function<double(const Point<dim> &)> sigma;
+
   // Forcing term.
   std::function<double(const Point<dim> &)> f;
-
-  // Neumann boundary condition.
-  std::function<double(const Point<dim> &)> h;
 
   // Triangulation.
   Triangulation<dim> mesh;
@@ -113,16 +93,6 @@ protected:
 
   // Quadrature formula.
   std::unique_ptr<Quadrature<dim>> quadrature;
-
-  // Quadrature formula for boundary integrals (these related to Neumann BCs).
-  // We need quadrature for the BCs, not because these are imposed in an
-  // integral formulation, but because they happen to appear as integrals in the
-  // weak form of the problem (i.e. integrals over the boundaries of v*h which
-  // are part of the right-hand side).
-  // The dimension is `dim - 1` because boundaries are one dimension lower than
-  // the domain (in this case, since `dim = 2`, the domanin is a surface and the
-  // boundaries are lines).
-  std::unique_ptr<Quadrature<dim - 1>> quadrature_boundary;
 
   // DoF handler.
   DoFHandler<dim> dof_handler;
@@ -139,5 +109,6 @@ protected:
   // System solution.
   Vector<double> solution;
 };
+} // namespace myDiffusionReaction
 
 #endif

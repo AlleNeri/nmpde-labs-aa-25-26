@@ -8,3 +8,7 @@ deal_ii_setup_target(exercise-01)
 
 add_executable(exercise-02 src/exercise-02.cpp src/DiffusionReaction.cpp)
 deal_ii_setup_target(exercise-02)
+
+add_executable(exercise-02-first-part src/exercise-02-first-part.cpp
+	src/my-DiffusionReaction.cpp)
+deal_ii_setup_target(exercise-02-first-part)

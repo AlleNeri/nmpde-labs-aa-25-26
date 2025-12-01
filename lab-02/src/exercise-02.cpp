@@ -36,8 +36,6 @@ public:
 
     return result;
   }
-
-  static constexpr double A = -4.0 / 15.0 * std::pow(0.5, 2.5);
 };
 
 // Main function.
