@@ -162,23 +162,29 @@ DiffusionReaction::solve()
 {
   std::cout << "===============================================" << std::endl;
 
+  // Since the linear system dimension in 3D starts to grow, we need to play a
+  // bit more with preconditioner; in particular when the mesh is fine.
+
   // PreconditionIdentity preconditioner;
 
-  // PreconditionJacobi preconditioner;
-  // preconditioner.initialize(system_matrix);
+  PreconditionJacobi preconditioner;
+  preconditioner.initialize(system_matrix);
 
+  // With the `AdditionalData` set to 1 the SOR preconditioner is equivalent to
+  // a GS preconditioner. Since it isn't a symmetric preconditioner this
+  // configuration of preconditioner need to be use with a GMRES solver, not CG.
   // PreconditionSOR preconditioner;
   // preconditioner.initialize(
   //   system_matrix,
   //   PreconditionSOR<SparseMatrix<double>>::AdditionalData(1.0));
 
-  PreconditionSSOR preconditioner;
-  preconditioner.initialize(
-    system_matrix, PreconditionSSOR<SparseMatrix<double>>::AdditionalData(1.0));
+  // PreconditionSSOR preconditioner;
+  // preconditioner.initialize(
+  //   system_matrix, PreconditionSSOR<SparseMatrix<double>>::AdditionalData(1.0));
 
-  ReductionControl solver_control(/* maxiter = */ 10000,
-                                  /* tolerance = */ 1.0e-16,
-                                  /* reduce = */ 1.0e-6);
+  ReductionControl solver_control(/* maxiter = */	1000,
+                                  /* tolerance = */	1.0e-16,
+                                  /* reduce = */	1.0e-6);
 
   SolverCG<Vector<double>> solver(solver_control);
 

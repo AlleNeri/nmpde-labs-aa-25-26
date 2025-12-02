@@ -13,15 +13,19 @@ DiffusionReactionParallel::setup()
     // triangulation.
     Triangulation<dim> mesh_serial;
 
-    {
+    { // Almost equal to the usual serial mesh reading.
       GridIn<dim> grid_in;
       grid_in.attach_triangulation(mesh_serial);
 
       std::ifstream mesh_file(mesh_file_name);
       grid_in.read_msh(mesh_file);
     }
+	// Now the mesh had been fully read inside `mesh_serial`.
 
-    // Then, we copy the serial mesh into the parallel one.
+    // Then, we copy the serial mesh into the parallel one. In this step, the
+	// only the local relevant part of the mesh is copied by each process.
+	// Here each process partitions the serial mesh into `mpi_size` parts and
+	// keeps only its own part.
     {
       GridTools::partition_triangulation(mpi_size, mesh_serial);
 
@@ -31,7 +35,8 @@ DiffusionReactionParallel::setup()
     }
 
     // Notice that here we write the number of *global* active cells (across all
-    // processes).
+    // processes); otherwise, only these owned by the current process (the one
+	// in charge of output) would be printed.
     pcout << "  Number of elements = " << mesh.n_global_active_cells()
           << std::endl;
   }
@@ -80,6 +85,8 @@ DiffusionReactionParallel::setup()
 
     // For the sparsity pattern, we use Trilinos' class, which manages some of
     // the inter-process communication.
+	// Notice: in this case we don't need to pass through the dynamic sparsity
+	// pattern.
     TrilinosWrappers::SparsityPattern sparsity(locally_owned_dofs,
                                                MPI_COMM_WORLD);
     DoFTools::make_sparsity_pattern(dof_handler, sparsity);
@@ -87,12 +94,18 @@ DiffusionReactionParallel::setup()
     // After initialization, we need to call compress, so that all processes
     // retrieve the information they need from the rows they own (i.e. the rows
     // corresponding to locally owned DoFs).
+	// This a recurrent operation that makes processes exchange information. Its
+	// semantic is: send data to the other processes and receive data from them.
+	// Since it works similarly to a barrier, it's crucial that all the
+	// processes in the pull reach this point of the code.
     sparsity.compress();
 
     pcout << "  Initializing the system matrix" << std::endl;
     // Since the sparsity pattern is partitioned by row, so will be the matrix.
     system_matrix.reinit(sparsity);
 
+	// Almost the same code of the usual serial case, but the linear algebra is
+	// initialized only for the locally owned DoFs.
     pcout << "  Initializing the system right-hand side" << std::endl;
     system_rhs.reinit(locally_owned_dofs, MPI_COMM_WORLD);
     pcout << "  Initializing the solution vector" << std::endl;
@@ -128,9 +141,14 @@ DiffusionReactionParallel::assemble()
   system_matrix = 0.0;
   system_rhs    = 0.0;
 
+  // Loop over all active cells. Since we previously "filtered out" the parts of
+  // the mesh that are not locally relevant, the loop is unchanged w.r.t. the
+  // serial case.
   for (const auto &cell : dof_handler.active_cell_iterators())
     {
-      // If current cell is not locally owned, we skip it.
+	  // What changes is that the local relevant cells might include both owned
+	  // and ghost cells. If current cell is not locally owned (so it's a gost
+	  // one), we skip it.
       if (!cell->is_locally_owned())
         continue;
 
@@ -152,19 +170,19 @@ DiffusionReactionParallel::assemble()
             {
               for (unsigned int j = 0; j < dofs_per_cell; ++j)
                 {
-                  cell_matrix(i, j) += mu_loc *                     //
-                                       fe_values.shape_grad(i, q) * //
-                                       fe_values.shape_grad(j, q) * //
+                  cell_matrix(i, j) += mu_loc *
+                                       fe_values.shape_grad(i, q) *
+                                       fe_values.shape_grad(j, q) *
                                        fe_values.JxW(q);
 
-                  cell_matrix(i, j) += sigma_loc *                   //
-                                       fe_values.shape_value(i, q) * //
-                                       fe_values.shape_value(j, q) * //
+                  cell_matrix(i, j) += sigma_loc *
+                                       fe_values.shape_value(i, q) *
+                                       fe_values.shape_value(j, q) *
                                        fe_values.JxW(q);
                 }
 
-              cell_rhs(i) += f_loc *                       //
-                             fe_values.shape_value(i, q) * //
+              cell_rhs(i) += f_loc *
+                             fe_values.shape_value(i, q) *
                              fe_values.JxW(q);
             }
         }
@@ -178,7 +196,11 @@ DiffusionReactionParallel::assemble()
   // Each process might have written to some rows it does not own (for instance,
   // if it owns elements that are adjacent to elements owned by some other
   // process). Therefore, at the end of assembly, processes need to exchange
-  // information: the compress method allows to do this.
+  // information: the compress method allows to do this, as discussed before.
+  // In short, we are handling the interface DoFs between different processes.
+  // Since the processes might receive information from multiple other processes
+  // and it needs to "merge" them in some way, we need to specify how to do so;
+  // the passed argument indicates that we want to sum contributions.
   system_matrix.compress(VectorOperation::add);
   system_rhs.compress(VectorOperation::add);
 
@@ -205,13 +227,15 @@ DiffusionReactionParallel::solve()
 {
   pcout << "===============================================" << std::endl;
 
+  // In this part of the code the only difference w.r.t. the serial case is the
+  // use of the appropriate objects from the `TrilinosWrappers` namespace.
   TrilinosWrappers::PreconditionSSOR preconditioner;
   preconditioner.initialize(
     system_matrix, TrilinosWrappers::PreconditionSSOR::AdditionalData(1.0));
 
-  ReductionControl solver_control(/* maxiter = */ 10000,
-                                  /* tolerance = */ 1.0e-16,
-                                  /* reduce = */ 1.0e-6);
+  ReductionControl solver_control(/* maxiter = */	10000,
+                                  /* tolerance = */	1.0e-16,
+                                  /* reduce = */	1.0e-6);
 
   SolverCG<TrilinosWrappers::MPI::Vector> solver(solver_control);
 
@@ -226,6 +250,16 @@ DiffusionReactionParallel::output() const
 {
   pcout << "===============================================" << std::endl;
 
+  // In the parallel case, the output of the solution becomes more complex
+  // because each processor only knows part of the solution (the one it owns).
+  // Therefore, in order to create a file with the full solution, each process
+  // should bring its part of the solution and then they are merged together.
+  // This is done in the following way: each process writes on a file its own
+  // part of solution and than a single process merges them together in a single
+  // one. As a result of this procedure, we obtain multiple "partial" solution
+  // files and a single "complete" one. All this behavior is managed by the
+  // library.
+
   const IndexSet locally_relevant_dofs =
     DoFTools::extract_locally_relevant_dofs(dof_handler);
 
@@ -239,7 +273,11 @@ DiffusionReactionParallel::output() const
 
   // This assignment performs the necessary communication so that the locally
   // relevant DoFs are received from other processes and stored inside
-  // solution_ghost.
+  // solution_ghost. It's morally like a reduction operation: since the rvalue
+  // is a vector with more entries than the lvalue one, a "choice" of the values
+  // is made; in particular, it's like if, from how the `solution_ghost` is
+  // initialized, it embeds the relative position of its entries w.r.t. the
+  // `solution` vector.
   solution_ghost = solution;
 
   // Then we build and fill the DataOut class as usual, using the vector with
@@ -259,12 +297,16 @@ DiffusionReactionParallel::output() const
 
   const std::filesystem::path mesh_path(mesh_file_name);
   const std::string output_file_name = "output-" + mesh_path.stem().string();
+  // Notice that in this case we don't add an extension to the file name, since
+  // the library tools will add it for us. There's a specific reason for this:
+  // the the two output files (of which we discussed before) will have different
+  // extensions, so the library needs to manage them internally.
 
   // Finally, we need to write in a format that supports parallel output. This
   // can be achieved in multiple ways (e.g. XDMF/H5). We choose VTU/PVTU files.
   data_out.write_vtu_with_pvtu_record(/* folder = */ "./",
                                       /* basename = */ output_file_name,
-                                      /* index = */ 0,
+                                      /* frame_number = */ 0, // Time-dependent.
                                       MPI_COMM_WORLD);
 
   pcout << "Output written to " << output_file_name << std::endl;

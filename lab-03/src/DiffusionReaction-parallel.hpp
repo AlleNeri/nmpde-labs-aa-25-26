@@ -99,9 +99,12 @@ protected:
   std::function<double(const Point<dim> &)> f;
 
   // Number of MPI processes.
+  // With this info, the process knows how many processes are involved in the
+  // computation.
   const unsigned int mpi_size;
 
   // Rank of the current MPI process.
+  // With this info, the process knows which is its own id in the computation.
   const unsigned int mpi_rank;
 
   // Triangulation. The parallel::fullydistributed::Triangulation class manages
@@ -121,6 +124,9 @@ protected:
   // DoF handler.
   DoFHandler<dim> dof_handler;
 
+  // The following linear algebra objects have a different type for the parallel
+  // use case.
+
   // System matrix.
   TrilinosWrappers::SparseMatrix system_matrix;
 
@@ -131,9 +137,13 @@ protected:
   TrilinosWrappers::MPI::Vector solution;
 
   // Output stream for process 0.
+  // This allows to write the same code for all the processes but only one of
+  // them actually writes to standard output.
   ConditionalOStream pcout;
 
   // Locally owned DoFs for current process.
+  // These are the local relevant DoFs that the current process is responsible
+  // to manage.
   IndexSet locally_owned_dofs;
 };
 

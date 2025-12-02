@@ -9,6 +9,7 @@ main(int argc, char *argv[])
   // This object calls MPI_Init when it is constructed and MPI_Finalize when it
   // is destroyed. It also initializes several other libraries bundled with
   // dealii (e.g. p4est, PETSc, ...).
+  // This is a convenient wrapper for MPI initialization/finalization.
   Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv);
 
   const std::string  mesh_filename = "../mesh/mesh-cube-40.msh";
@@ -21,8 +22,8 @@ main(int argc, char *argv[])
       return 1.0;
   };
 
-  const auto f     = [](const Point<dim>     &/*p*/) { return 1.0; };
-  const auto sigma = [](const Point<dim> & /*p*/) { return 1.0; };
+  const auto f     = [](const Point<dim> &/*p*/) { return 1.0; };
+  const auto sigma = [](const Point<dim> &/*p*/) { return 1.0; };
 
   DiffusionReactionParallel problem(mesh_filename, degree, mu, sigma, f);
 

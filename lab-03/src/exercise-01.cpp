@@ -6,7 +6,7 @@ main(int /*argc*/, char * /*argv*/[])
 {
   constexpr unsigned int dim = DiffusionReaction::dim;
 
-  const std::string  mesh_filename = "../mesh/mesh-cube-40.msh";
+  const std::string  mesh_filename = "../mesh/mesh-cube-10.msh";
   const unsigned int degree        = 1;
 
   const auto mu = [](const Point<dim> &p) {

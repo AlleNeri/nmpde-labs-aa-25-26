@@ -155,10 +155,8 @@ DiffusionReaction::assemble()
     Functions::ZeroFunction<dim>			  bc_function;
 
     std::map<types::boundary_id, const Function<dim> *> boundary_functions;
-    boundary_functions[0] = &bc_function;
-    boundary_functions[1] = &bc_function;
-	boundary_functions[2] = &bc_function;
-	boundary_functions[3] = &bc_function;
+	for (types::boundary_id b_id = 0; b_id < 2 * dim; ++b_id)
+	  boundary_functions[b_id] = &bc_function;
 
     VectorTools::interpolate_boundary_values(dof_handler,
                                              boundary_functions,
@@ -174,7 +172,7 @@ DiffusionReaction::solve()
 {
   std::cout << "===============================================" << std::endl;
 
-  ReductionControl solver_control(/* maxiter = */	1000,
+  ReductionControl solver_control(/* maxiter = */	10000,
                                   /* tolerance = */ 1.0e-16,
                                   /* reduce = */	1.0e-6);
 
