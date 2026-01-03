@@ -54,6 +54,7 @@ Poisson1D::setup()
 	// of function values at specific points (the quadrature points).
     // This formula integrates exactly the mass matrix terms (i.e. products of
     // basis functions).
+	// This is the same as computing integrals.
     quadrature = std::make_unique<QGaussSimplex<dim>>(r + 1);
 
     std::cout << "  Quadrature points per cell = " << quadrature->size()
@@ -188,10 +189,10 @@ Poisson1D::assemble()
                                        fe_values.shape_grad(j, q) *
                                        fe_values.JxW(q);
 				  // `JxW` makes it happen the reference mesh element trick.
-				  // It returns a precomputed value (cached), that's the reason
-				  // why it doesn't affect much the performance to precompute it
-				  // once outside this inner loop and use it here and in the rhs
-				  // assembly below (as we did for `mu_loc` and `f_loc`).
+				  // It returns a precomputed value (cached), that's why it
+				  // doesn't affect much the performance to precompute it once
+				  // outside this inner loop rather than use it here and in the
+				  // rhs assembly below (as we did for `mu_loc` and `f_loc`).
               }
 
               cell_rhs(i) += f_loc *
