@@ -16,7 +16,12 @@ main(int argc, char *argv[])
   Heat problem(/*mesh_filename = */ "../mesh/mesh-cube-10.msh",
                /* degree = */ 1,
                /* T = */ 1.0,
-               /* theta = */ 0.0,
+               /* theta = */ 0.0, // There is decided the method:
+								  // 0.0 -> explicit forward Euler
+								  // 0.5 -> Crank-Nicolson
+								  // 1.0 -> implicit backward Euler (convergence
+								  // only for small time steps, in other wards
+								  // it needs a small `delta_t`!)
                /* delta_t = */ 0.0025,
                mu,
                f);

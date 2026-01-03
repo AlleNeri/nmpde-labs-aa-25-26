@@ -55,8 +55,8 @@ public:
     value(const Point<dim> &p,
           const unsigned int /*component*/ = 0) const override
     {
-      return p[0] * (1.0 - p[0]) * //
-             p[1] * (1.0 - p[1]) * //
+      return p[0] * (1.0 - p[0]) *
+             p[1] * (1.0 - p[1]) *
              p[2] * (1.0 - p[2]);
     }
   };
@@ -109,6 +109,7 @@ protected:
   // Polynomial degree.
   const unsigned int r;
 
+  // The following 3 variables are related to time-discretization.
   // Final time.
   const double T;
 
@@ -117,6 +118,9 @@ protected:
 
   // Time step.
   const double delta_t;
+
+  // The following variables are used to keep track of the "position" in the
+  // time interval [0, T].
 
   // Current time.
   double time = 0.0;
@@ -154,10 +158,14 @@ protected:
   // System right-hand side.
   TrilinosWrappers::MPI::Vector system_rhs;
 
-  // System solution, without ghost elements.
+  // For the purpose of reading the solution of the previous timestep in a more
+  // convenient way, we store both the vector of owned elements and the vector
+  // with both owned and ghost elements.
+
+  // System solution, without ghost elements. We are going to write into it.
   TrilinosWrappers::MPI::Vector solution_owned;
 
-  // System solution, with ghost elements.
+  // System solution, with ghost elements. We are going to read from it.
   TrilinosWrappers::MPI::Vector solution;
 
   // Output stream for process 0.
