@@ -49,7 +49,8 @@ public:
   void
   setup();
 
-  // Solve the problem using Newton's method.
+  // Solve the problem using Newton's method. This methrod is going to call
+  // internally the assemble_system() and solve_system() methods multiple times.
   void
   solve_newton();
 

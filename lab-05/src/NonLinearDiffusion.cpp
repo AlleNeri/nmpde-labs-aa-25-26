@@ -122,10 +122,15 @@ NonLinearDiffusion::assemble_system()
   jacobian_matrix = 0.0;
   residual_vector = 0.0;
 
+  // In this function we are going to assemble the system:
+  // a(u^{(k)})(\delta, v) = -R(u^{(k)}, v)	  \forall v
+  // u^{(k+1)} = u^{(k)} + \delta
+  // As we can see, it depends on the value in the previous iteration (and
+  // actually also on its gradient).
   // We use these vectors to store the old solution (i.e. at previous Newton
   // iteration) and its gradient on quadrature nodes of the current cell.
-  std::vector<double>         solution_loc(n_q);
-  std::vector<Tensor<1, dim>> solution_gradient_loc(n_q);
+  std::vector<double>         solution_loc(n_q);		  // u^{(k)}
+  std::vector<Tensor<1, dim>> solution_gradient_loc(n_q); // \grad u^{(k)}
 
   for (const auto &cell : dof_handler.active_cell_iterators())
     {
@@ -151,34 +156,43 @@ NonLinearDiffusion::assemble_system()
           const double mu_1_loc = 10.0;
           const double f_loc    = 1.0;
 
+		  // Some precomputed values.
+		  // This syntax is better than `pow`, beacuse of performance.
+		  const double solution_squared = solution_loc[q] * solution_loc[q];
+		  const double second_ord_term = mu_0_loc + mu_1_loc * solution_squared;
+
           for (unsigned int i = 0; i < dofs_per_cell; ++i)
             {
               for (unsigned int j = 0; j < dofs_per_cell; ++j)
                 {
                   cell_matrix(i, j) +=
-                    (2.0 * mu_1_loc * solution_loc[q] *
-                     fe_values.shape_value(j, q)) *
-                    scalar_product(solution_gradient_loc[q],
-                                   fe_values.shape_grad(i, q)) *
-                    fe_values.JxW(q);
+                    (
+					  2.0 * mu_1_loc * solution_loc[q] *
+					  fe_values.shape_value(j, q)
+					) *								// (2 \mu_1 u^{(k)} \phi_j)
+                    scalar_product(solution_gradient_loc[q],	 //\grad u^{(k)}
+                                   fe_values.shape_grad(i, q)) * //\grad \phi_j
+                    fe_values.JxW(q);							  // quadrature
 
                   cell_matrix(i, j) +=
-                    (mu_0_loc + mu_1_loc * solution_loc[q] * solution_loc[q]) *
-                    scalar_product(fe_values.shape_grad(j, q),
-                                   fe_values.shape_grad(i, q)) *
-                    fe_values.JxW(q);
+                    second_ord_term *			  // \mu_0 + ( \mu_1 u^{(k)}^2 )
+                    scalar_product(fe_values.shape_grad(j, q),	 // \grad \phi_j
+                                   fe_values.shape_grad(i, q)) * // \grad \phi_i
+                    fe_values.JxW(q);							  // quadrature
                 }
 
-              // -F(v)
+			  // The r.h.s. is: -R(u, v) = -(b(u, v) - F(v)) = F(v) - b(u, v)
+
+              // F(v)
               cell_rhs(i) +=
                 f_loc * fe_values.shape_value(i, q) * fe_values.JxW(q);
 
-              // a(u, v)
+              // -b(u, v)
               cell_rhs(i) -=
-                (mu_0_loc + mu_1_loc * solution_loc[q] * solution_loc[q]) *
-                scalar_product(solution_gradient_loc[q],
-                               fe_values.shape_grad(i, q)) *
-                fe_values.JxW(q);
+                second_ord_term *				  // \mu_0 + ( \mu_1 u^{(k)}^2 )
+                scalar_product(solution_gradient_loc[q],		// \grad u^{(k)}
+                               fe_values.shape_grad(i, q)) *	// \grad \phi_i
+                fe_values.JxW(q);								  // quadrature
             }
         }
 
@@ -215,6 +229,8 @@ NonLinearDiffusion::solve_system()
 {
   SolverControl solver_control(1000, 1e-6 * residual_vector.l2_norm());
 
+  // Notice: the conjugate gradient method can't be used here beacuse the matrix
+  // is not symmetric.
   SolverGMRES<TrilinosWrappers::MPI::Vector> solver(solver_control);
   TrilinosWrappers::PreconditionSSOR         preconditioner;
   preconditioner.initialize(
@@ -229,19 +245,26 @@ void
 NonLinearDiffusion::solve_newton()
 {
   pcout << "===============================================" << std::endl;
+  // Being an iterative method, we need to repeat the assembly and solution of
+  // the linear system multiple times, until convergence.
 
+  // Some parameters for the stopping conditions.
   const unsigned int n_max_iters        = 1000;
   const double       residual_tolerance = 1e-6;
 
+  // Some variables containing the iteration sequence on which we enforce the
+  // stopping conditions.
   unsigned int n_iter        = 0;
   double       residual_norm = residual_tolerance + 1;
 
+  // Stopping conditions: reaching a maximum number of iterations or achieving a
+  // sufficiently small residual.
   while (n_iter < n_max_iters && residual_norm > residual_tolerance)
     {
       assemble_system();
       residual_norm = residual_vector.l2_norm();
 
-      pcout << "Newton iteration " << n_iter << "/" << n_max_iters
+      pcout << "Newton iteration " << ++n_iter << "/" << n_max_iters
             << " - ||r|| = " << std::scientific << std::setprecision(6)
             << residual_norm << std::flush;
 
@@ -251,15 +274,16 @@ NonLinearDiffusion::solve_newton()
         {
           solve_system();
 
-          solution_owned += delta_owned;
-          solution = solution_owned;
+          solution_owned += delta_owned;  // Update the solution locally.
+          solution = solution_owned;	  // Usual parallel update.
         }
       else
         {
           pcout << " < tolerance" << std::endl;
         }
 
-      ++n_iter;
+      // ++n_iter;	// Moved inside the print statement. Notice: don't cancel
+					// this line, for eventual future modifications.
     }
 
   pcout << "===============================================" << std::endl;
