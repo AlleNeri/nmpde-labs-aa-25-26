@@ -42,6 +42,12 @@ LinearElasticity::setup()
     // To construct a vector-valued finite element space, we use the FESystem
     // class. It is still derived from FiniteElement.
     FE_SimplexP<dim> fe_scalar(r);
+	// FESystem concatenates multiple finite element spaces, one for each
+	// component of the vector-valued space (this difference arises form the
+	// fact that instead of scalar shape functions, we are now dealing with
+	// vector-valued shape functions). With the following initialization of this
+	// object, we are giving to each of the `dim` component the same finite
+	// element space, the one defined by `fe_scalar`.
     fe = std::make_unique<FESystem<dim>>(fe_scalar, dim);
 
     pcout << "  Degree                     = " << fe->degree << std::endl;
@@ -130,7 +136,18 @@ LinearElasticity::assemble_system()
   // This class allows us to access vector-valued shape functions, so that we
   // don't have to worry about dealing with their components, but we can
   // directly use the vectorial form of the weak formulation.
+  // This object is needed because there's a mismatch between the way shape
+  // functions are stored in deal.II (as scalar functions for each component)
+  // and the way we write the weak formulation (in vectorial form); this object
+  // bridges this gap.
   FEValuesExtractors::Vector displacement(0);
+  // Notice: the drawback of using this approach which goes through each
+  // component of the vector-valued basis function is that there are a lot of
+  // "unuseful" loop iterations due to the zero components of the vector-valued
+  // basis functions. This helps code readability, but for a performance
+  // improvement we could "manually" handle the structure of the vector-valued
+  // basis function as composition of scalar basis functions. This would be a
+  // more complex implementation, though.
 
   for (const auto &cell : dof_handler.active_cell_iterators())
     {
@@ -149,17 +166,20 @@ LinearElasticity::assemble_system()
               for (unsigned int j = 0; j < dofs_per_cell; ++j)
                 {
                   cell_matrix(i, j) +=
-                    (mu *
-                       scalar_product(fe_values[displacement].gradient(j, q),
-                                      fe_values[displacement].gradient(i, q)) +
-                     lambda * fe_values[displacement].divergence(j, q) *
-                       fe_values[displacement].divergence(i, q)) *
-                    fe_values.JxW(q);
+                    (
+					  mu *												  // \mu
+					  scalar_product(fe_values[displacement].gradient(j, q),
+                                     fe_values[displacement].gradient(i, q)) +
+															// \grad u : \grad v
+                     lambda *										  // \lambda
+					 fe_values[displacement].divergence(j, q) *		  // \grad u
+                     fe_values[displacement].divergence(i, q)		  // \grad v
+					) * fe_values.JxW(q);					// quadrature weight
                 }
 
               cell_rhs(i) +=
-                scalar_product(f, fe_values[displacement].value(i, q)) *
-                fe_values.JxW(q);
+                scalar_product(f, fe_values[displacement].value(i, q)) *  // f·v
+                fe_values.JxW(q);							// quadrature weight
             }
         }
 
@@ -219,9 +239,12 @@ LinearElasticity::output() const
   // By passing these two additional arguments to add_data_vector, we specify
   // that the three components of the solution are actually the three components
   // of a vector, so that the visualization program can take that into account.
+  // The idea is that we are going to visualize a vector field, in place of a
+  // scalar field.
   std::vector<DataComponentInterpretation::DataComponentInterpretation>
     data_component_interpretation(
-      dim, DataComponentInterpretation::component_is_part_of_vector);
+      dim, DataComponentInterpretation::component_is_part_of_vector
+	);	// This is the most simple case, there could also be mixed cases.
   std::vector<std::string> solution_names(dim, "u");
 
   data_out.add_data_vector(dof_handler,
