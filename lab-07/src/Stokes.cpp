@@ -30,12 +30,22 @@ Stokes::setup()
   {
     pcout << "Initializing the finite element space" << std::endl;
 
+	// In order to create the finite element space for the whole problem, we are
+	// going to first create the finite element spaces for the individual
+	// variables (velocity and pressure), and then combine them into a single
+	// `FESystem`.
     const FE_SimplexP<dim> fe_scalar_velocity(degree_velocity);
     const FE_SimplexP<dim> fe_scalar_pressure(degree_pressure);
-    fe = std::make_unique<FESystem<dim>>(fe_scalar_velocity,
-                                         dim,
-                                         fe_scalar_pressure,
-                                         1);
+	// The velocity finite element space needs to be repeated for each dimension
+	// while the pressure space is just a single scalar space.
+    fe = std::make_unique<FESystem<dim>>(fe_scalar_velocity, dim, // velocity x3
+                                         fe_scalar_pressure, 1);  // pressure x1
+	// Notice: this way of constructing the `FESystem` ensures that the internal
+	// representation of the finite element space for velocity won't be
+	// considered as 3 separate finite element spaces, but rather as a single
+	// vector-valued finite element space. This is the difference between the
+	// concepts of "block" (e.g. x, y, z of velocity) and "component" (velocity
+	// and pressure) in deal.II.
 
     pcout << "  Velocity degree:           = " << fe_scalar_velocity.degree
           << std::endl;
@@ -49,6 +59,8 @@ Stokes::setup()
     pcout << "  Quadrature points per cell = " << quadrature->size()
           << std::endl;
 
+	// In order to apply Neumann boundary conditions, we also need a quadrature
+	// rule on the faces of the elements.
     quadrature_face = std::make_unique<QGaussSimplex<dim - 1>>(fe->degree + 1);
 
     pcout << "  Quadrature points per face = " << quadrature_face->size()
@@ -65,18 +77,22 @@ Stokes::setup()
     dof_handler.distribute_dofs(*fe);
 
     // We want to reorder DoFs so that all velocity DoFs come first, and then
-    // all pressure DoFs.
+    // all pressure DoFs. This is crucial for what concerns the status of the
+	// expected structure of the system.
     std::vector<unsigned int> block_component(dim + 1, 0);
     block_component[dim] = 1;
     DoFRenumbering::component_wise(dof_handler, block_component);
 
+	// As usual we extract the locally owned and relavant degrees of freedom.
     locally_owned_dofs = dof_handler.locally_owned_dofs();
     locally_relevant_dofs =
       DoFTools::extract_locally_relevant_dofs(dof_handler);
 
     // Besides the locally owned and locally relevant indices for the whole
-    // system (velocity and pressure), we will also need those for the
-    // individual velocity and pressure blocks.
+    // system (mixing velocity and pressure), we will also need those for the
+    // individual velocity and pressure blocks. Basically, the same splitting we
+	// used for the container of all the degrees of freedom is enforced also for
+	// the local pools.
     std::vector<types::global_dof_index> dofs_per_block =
       DoFTools::count_dofs_per_fe_block(dof_handler, block_component);
     const unsigned int n_u = dofs_per_block[0];
@@ -114,26 +130,26 @@ Stokes::setup()
       {
         for (unsigned int d = 0; d < dim + 1; ++d)
           {
-            if (c == dim && d == dim) // pressure-pressure term
+            if (c == dim && d == dim)		  // pressure-pressure term
               coupling[c][d] = DoFTools::none;
-            else // other combinations
+            else							  // other combinations
               coupling[c][d] = DoFTools::always;
           }
       }
-
     TrilinosWrappers::BlockSparsityPattern sparsity(block_owned_dofs,
                                                     MPI_COMM_WORLD);
     DoFTools::make_sparsity_pattern(dof_handler, coupling, sparsity);
     sparsity.compress();
 
-    // We also build a sparsity pattern for the pressure mass matrix.
+    // We also build a sparsity pattern for the pressure mass matrix. In this
+	// case it's exactly the opposite of the previous one.
     for (unsigned int c = 0; c < dim + 1; ++c)
       {
         for (unsigned int d = 0; d < dim + 1; ++d)
           {
-            if (c == dim && d == dim) // pressure-pressure term
+            if (c == dim && d == dim)			// pressure-pressure term
               coupling[c][d] = DoFTools::always;
-            else // other combinations
+            else								// other combinations
               coupling[c][d] = DoFTools::none;
           }
       }
@@ -175,6 +191,8 @@ Stokes::assemble()
                                    update_values | update_normal_vectors |
                                      update_JxW_values);
 
+  // In addition to the usual matrix and rhs, we also build the mass matrix
+  // which will be used in the preconditioning step.
   FullMatrix<double> cell_matrix(dofs_per_cell, dofs_per_cell);
   FullMatrix<double> cell_pressure_mass_matrix(dofs_per_cell, dofs_per_cell);
   Vector<double>     cell_rhs(dofs_per_cell);
@@ -205,19 +223,34 @@ Stokes::assemble()
             {
               for (unsigned int j = 0; j < dofs_per_cell; ++j)
                 {
+				  // Notice: in the computation of each term we use the
+				  // `velocity` or `pressure` extractors accordingly with the
+				  // basis function required by the theoretical weak formulation
+				  // Notice: the combined action of extract and degree of fredom
+				  // index let us assemble the system in this way, without
+				  // taking into account the block structure (we extract some
+				  // zero terms and add them to the results which wont have any
+				  // effect). This is useful in term of readability of the code,
+				  // but that's not the most efficient way to do it. A more
+				  // efficient way is possible, but more complex to implement.
+
                   // Viscosity term.
                   cell_matrix(i, j) +=
-                    nu *
+                    nu *									// viscosity term nu
                     scalar_product(fe_values[velocity].gradient(i, q),
                                    fe_values[velocity].gradient(j, q)) *
-                    fe_values.JxW(q);
+                    fe_values.JxW(q); // product of the gradient of the basis
+									  // function weighted for the quadrature.
 
-                  // Pressure term in the momentum equation.
+                  // Pressure term in the momentum equation. The next one is the
+				  // computation of the B matrix; this is the same but with
+				  // swapped indexes beacuse the B matrix in the first equation
+				  // is taken with its transpose.
                   cell_matrix(i, j) -= fe_values[velocity].divergence(i, q) *
                                        fe_values[pressure].value(j, q) *
                                        fe_values.JxW(q);
 
-                  // Pressure term in the continuity equation.
+                  // Pressure term in the continuity equation. Actual B matrix.
                   cell_matrix(i, j) -= fe_values[velocity].divergence(j, q) *
                                        fe_values[pressure].value(i, q) *
                                        fe_values.JxW(q);
@@ -228,7 +261,7 @@ Stokes::assemble()
                     fe_values[pressure].value(j, q) / nu * fe_values.JxW(q);
                 }
 
-              // There is no forcing term.
+              // There is no forcing term (it' zero).
             }
         }
 
@@ -238,7 +271,7 @@ Stokes::assemble()
           for (unsigned int f = 0; f < cell->n_faces(); ++f)
             {
               if (cell->face(f)->at_boundary() &&
-                  cell->face(f)->boundary_id() == 2)
+                  cell->face(f)->boundary_id() == 2)  // "Outlet" boundary.
                 {
                   fe_face_values.reinit(cell, f);
 
@@ -249,9 +282,8 @@ Stokes::assemble()
                           cell_rhs(i) +=
                             -p_out *
                             scalar_product(fe_face_values.normal_vector(q),
-                                           fe_face_values[velocity].value(i,
-                                                                          q)) *
-                            fe_face_values.JxW(q);
+                                           fe_face_values[velocity].value(i, q)
+										  ) * fe_face_values.JxW(q);
                         }
                     }
                 }
@@ -274,18 +306,28 @@ Stokes::assemble()
     std::map<types::global_dof_index, double>           boundary_values;
     std::map<types::boundary_id, const Function<dim> *> boundary_functions;
 
+	// We only want to apply Dirichlet conditions on the velocity, not on the
+	// pressure. Therefore, we create a component mask which selects all
+	// velocity components (the first `dim` components) and ignores the
+	// pressure component (the last one).
     ComponentMask mask_velocity(dim + 1, true);
     mask_velocity.set(dim, false);
+	// If for any reason we would want to apply some conditions only to some
+	// components of the velocity (e.g. only x and y, but not z), we could do it
+	// by setting to false also the corresponding entries in the component.
 
     // We interpolate first the inlet velocity condition alone, then the wall
     // condition alone, so that the latter "win" over the former where the two
     // boundaries touch.
+
+	// Inlet boundary.
     boundary_functions[0] = &inlet_velocity;
     VectorTools::interpolate_boundary_values(dof_handler,
                                              boundary_functions,
                                              boundary_values,
                                              mask_velocity);
 
+	// Wall boundary (zero velocity or no-slipping condition).
     boundary_functions.clear();
     Functions::ZeroFunction<dim> zero_function(dim + 1);
     boundary_functions[1] = &zero_function;
@@ -308,14 +350,14 @@ Stokes::solve()
 
   SolverGMRES<TrilinosWrappers::MPI::BlockVector> solver(solver_control);
 
-  // PreconditionBlockDiagonal preconditioner;
-  // preconditioner.initialize(system_matrix.block(0, 0),
-  //                           pressure_mass.block(1, 1));
-
-  PreconditionBlockTriangular preconditioner;
+  PreconditionBlockDiagonal preconditioner;
   preconditioner.initialize(system_matrix.block(0, 0),
-                            pressure_mass.block(1, 1),
-                            system_matrix.block(1, 0));
+                            pressure_mass.block(1, 1));
+
+  // PreconditionBlockTriangular preconditioner;
+  // preconditioner.initialize(system_matrix.block(0, 0),
+  //                           pressure_mass.block(1, 1),
+  //                           system_matrix.block(1, 0));
 
   pcout << "Solving the linear system" << std::endl;
   solver.solve(system_matrix, solution_owned, system_rhs, preconditioner);
@@ -332,11 +374,17 @@ Stokes::output()
 
   DataOut<dim> data_out;
 
+  // For a correct visualization, we need to specify which components of the
+  // solution vector represent parts of a vector field, and which parts are
+  // scalars. In this case, the first `dim` components are vector components
+  // (velocity), while the last component is a scalar (pressure). This is
+  // necessary to correctly visualize the solution.
   std::vector<DataComponentInterpretation::DataComponentInterpretation>
     interpretation(dim,
                    DataComponentInterpretation::component_is_part_of_vector);
   interpretation.push_back(DataComponentInterpretation::component_is_scalar);
 
+  // Same as before for nameing.
   std::vector<std::string> names(dim, "velocity");
   names.push_back("pressure");
 

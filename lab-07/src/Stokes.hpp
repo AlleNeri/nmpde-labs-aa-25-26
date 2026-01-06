@@ -119,19 +119,26 @@ public:
     vmult(TrilinosWrappers::MPI::BlockVector       &dst,
           const TrilinosWrappers::MPI::BlockVector &src) const
     {
-      SolverControl                           solver_control_velocity(1000,
-                                            1e-2 * src.block(0).l2_norm());
+	  // Given 2 vectors we need to compute: P^{-1} * src = dst
+	  // Instead of doing this directly, we solve the system: P * dst = src
+	  // Since both P and src are block matrix and vector respectively, we can
+	  // split the system into two independent parts.
+
+	  // The first part represents the velocity block: A * dst_v = src_v
+	  // Which is the same as: dst_v = A^{-1} * src_v
+      SolverControl solver_control_velocity(1000, 1e-2*src.block(0).l2_norm());
       SolverCG<TrilinosWrappers::MPI::Vector> solver_cg_velocity(
-        solver_control_velocity);
+													solver_control_velocity);
       solver_cg_velocity.solve(*velocity_stiffness,
                                dst.block(0),
                                src.block(0),
                                preconditioner_velocity);
 
-      SolverControl                           solver_control_pressure(1000,
-                                            1e-2 * src.block(1).l2_norm());
+	  // The second part represents the pressure block: M_p/\nu * dst_p = src_p
+	  // Which is the same as: dst_p = \nu * M_p^{-1} * src_p
+      SolverControl solver_control_pressure(1000, 1e-2*src.block(1).l2_norm());
       SolverCG<TrilinosWrappers::MPI::Vector> solver_cg_pressure(
-        solver_control_pressure);
+													solver_control_pressure);
       solver_cg_pressure.solve(*pressure_mass,
                                dst.block(1),
                                src.block(1),
@@ -176,23 +183,25 @@ public:
     vmult(TrilinosWrappers::MPI::BlockVector       &dst,
           const TrilinosWrappers::MPI::BlockVector &src) const
     {
-      SolverControl                           solver_control_velocity(1000,
-                                            1e-2 * src.block(0).l2_norm());
+	  // More on this in the implementation of the previous preconditioner.
+      SolverControl solver_control_velocity(1000, 1e-2*src.block(0).l2_norm());
       SolverCG<TrilinosWrappers::MPI::Vector> solver_cg_velocity(
-        solver_control_velocity);
+													solver_control_velocity);
       solver_cg_velocity.solve(*velocity_stiffness,
                                dst.block(0),
                                src.block(0),
                                preconditioner_velocity);
 
+	  // Since this method is called multiple times, intead of allocating a new
+	  // temporary vector each time, we reuse the same one saved as a member
+	  // variable.
       tmp.reinit(src.block(1));
       B->vmult(tmp, dst.block(0));
       tmp.sadd(-1.0, src.block(1));
 
-      SolverControl                           solver_control_pressure(1000,
-                                            1e-2 * src.block(1).l2_norm());
+      SolverControl solver_control_pressure(1000, 1e-2*src.block(1).l2_norm());
       SolverCG<TrilinosWrappers::MPI::Vector> solver_cg_pressure(
-        solver_control_pressure);
+													solver_control_pressure);
       solver_cg_pressure.solve(*pressure_mass,
                                dst.block(1),
                                tmp,
@@ -220,6 +229,8 @@ public:
   };
 
   // Constructor.
+  // Notice: since there are 2 spaces (velocity and pressure), we could have 2
+  // different polynomial degrees.
   Stokes(const std::string  &mesh_file_name_,
          const unsigned int &degree_velocity_,
          const unsigned int &degree_pressure_)
@@ -310,12 +321,21 @@ protected:
   // DoFs relevant to current process in the velocity and pressure blocks.
   std::vector<IndexSet> block_relevant_dofs;
 
-  // System matrix.
+  // System matrix; in this case the type is block (and also sparse) matrix,
+  // which exploits the knowledge about the block structure of the system. This
+  // is also useful beacause it helps the "by-block" accesses which are common,
+  // especially when applying preconditioners.
   TrilinosWrappers::BlockSparseMatrix system_matrix;
 
   // Pressure mass matrix, needed for preconditioning. We use a block matrix for
-  // convenience, but in practice we only look at the pressure-pressure block.
+  // convenience, but in practice we only look at the pressure-pressure block (
+  // it will have the same dimension of the system matrix, but only the bottom
+  // right block will have non-zero entries).
   TrilinosWrappers::BlockSparseMatrix pressure_mass;
+
+  // Also the vectors are defined as block vectors in order to facilitate the
+  // by-block operations and to carry the conceptual intuition of separating
+  // velocity and pressure components.
 
   // Right-hand side vector in the linear system.
   TrilinosWrappers::MPI::BlockVector system_rhs;
