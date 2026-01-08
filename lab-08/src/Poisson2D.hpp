@@ -60,6 +60,8 @@ public:
   void
   output(const unsigned int &iter) const;
 
+  // The following are very specific methods for a domain decomposition context.
+
   // Apply Dirichlet conditions on the interface with another Poisson2D problem.
   void
   apply_interface_dirichlet(const Poisson2D &other);
@@ -82,7 +84,8 @@ public:
 protected:
   // Build an interface map, that is construct a map that to each DoF on the
   // interface for this subproblem associates the corresponding interface DoF on
-  // the other subdomain.
+  // the other subdomain. It basically links the DoFs of the two subdomains on
+  // the interface.
   std::map<types::global_dof_index, types::global_dof_index>
   compute_interface_map(const Poisson2D &other) const;
 

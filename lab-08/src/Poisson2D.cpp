@@ -8,6 +8,7 @@ Poisson2D::setup()
     GridIn<dim> grid_in;
     grid_in.attach_triangulation(mesh);
 
+	// We directly read the subdomain mesh from file.
     std::ifstream grid_in_file("../mesh/mesh-problem-" +
                                std::to_string(subdomain_id) + ".msh");
 
@@ -25,7 +26,8 @@ Poisson2D::setup()
     dof_handler.reinit(mesh);
     dof_handler.distribute_dofs(*fe);
 
-    // Compute support points for the DoFs.
+    // Compute support points for the DoFs. This is particularly necessary for
+	// interface DoFs mapping.
     FE_SimplexP<dim> fe_linear(1);
     MappingFE        mapping(fe_linear);
     support_points = DoFTools::map_dofs_to_support_points(mapping, dof_handler);
@@ -90,11 +92,18 @@ Poisson2D::assemble()
 
   // Boundary conditions.
   {
+	// Notice: we are applying the boundary condition on the "original" boundary
+	// only, not on the interface; it will be done separately.
+
     std::map<types::global_dof_index, double>           boundary_values;
     std::map<types::boundary_id, const Function<dim> *> boundary_functions;
 
     Functions::ConstantFunction<dim> function_bc(subdomain_id);
+	// Just because in this specific function the boundary value corresponds to
+	// the subdomain ID.
     boundary_functions[subdomain_id == 0 ? 0 : 1] = &function_bc;
+	// Notice: in the previous line, each subdomain sets the boundary on which
+	// it is responsible.
 
     VectorTools::interpolate_boundary_values(dof_handler,
                                              boundary_functions,
@@ -125,6 +134,9 @@ Poisson2D::output(const unsigned int &iter) const
   const std::string output_file_name = "output-" +
                                        std::to_string(subdomain_id) + "-" +
                                        std::to_string(iter) + ".vtk";
+  // Notice: the file name would also contain the subdomain ID (to avoid
+  // overwriting). Moreover, it also contains the iteration number (to keep
+  // track of the solution evolution, a didactic purpose).
   std::ofstream output_file(output_file_name);
   data_out.write_vtk(output_file);
 }
@@ -135,9 +147,12 @@ Poisson2D::apply_interface_dirichlet(const Poisson2D &other)
   const auto interface_map = compute_interface_map(other);
 
   // We use the interface map to build a boundary values map for interface DoFs.
+  // In other words, we are imposing that the solution on the interface for this
+  // subproblem is equal to the solution on the interface for the other
+  // subproblem.
   std::map<types::global_dof_index, double> boundary_values;
   for (const auto &dof : interface_map)
-    boundary_values[dof.first] = other.solution[dof.second];
+    boundary_values[dof.first] = other.solution[dof.second];  //s_this = s_other
 
   // Then, we apply those boundary values.
   MatrixTools::apply_boundary_values(
@@ -156,36 +171,49 @@ Poisson2D::apply_interface_neumann(Poisson2D &other)
   // (weak) normal derivative as the residual of the system of the other
   // subdomain, excluding interface conditions.
   Vector<double> interface_residual;
-  other.assemble();
+  other.assemble();	  // Recall: the assemble doesn't apply boundary conditions.
   interface_residual = other.system_rhs;
   interface_residual *= -1;
   other.system_matrix.vmult_add(interface_residual, other.solution);
+  // Note: semantic of the `vmult_add(dest, src)`: dest += M * src
 
   // Then, we add the elements of the residual corresponding to interface DoFs
   // to the system rhs for current subproblem.
   for (const auto &dof : interface_map)
     system_rhs[dof.first] -= interface_residual[dof.second];
+  // Notice: obviously the normal direction on one subdomain is opposite to the
+  // normal direction on the other subdomain; this is tackled by the minus sign.
 }
 
 std::map<types::global_dof_index, types::global_dof_index>
 Poisson2D::compute_interface_map(const Poisson2D &other) const
 {
+  // Given the indexing of the two DoF handlers (which are independent from each
+  // other), we need to build a map that associates to each interface DoF on the
+  // current subdomain the corresponding interface DoF on the other subdomain.
+
   // Retrieve interface DoFs on the current and other subdomain.
   IndexSet current_interface_dofs;
   IndexSet other_interface_dofs;
 
+  // Notice: as an ad hoc implementation, there are some magic numbers that
+  // doesn't necessarily generalize to other problems. In particular, the set of
+  // boundary IDs used to extract interface DoFs (the last argument), are
+  // problem-specific.
   if (subdomain_id == 0)
     {
-      current_interface_dofs =
-        DoFTools::extract_boundary_dofs(dof_handler, ComponentMask(), {1});
+      current_interface_dofs = DoFTools::extract_boundary_dofs(dof_handler,
+															   ComponentMask(),
+															   {1});
       other_interface_dofs = DoFTools::extract_boundary_dofs(other.dof_handler,
                                                              ComponentMask(),
                                                              {0});
     }
   else
     {
-      current_interface_dofs =
-        DoFTools::extract_boundary_dofs(dof_handler, ComponentMask(), {0});
+      current_interface_dofs = DoFTools::extract_boundary_dofs(dof_handler,
+															   ComponentMask(),
+															   {0});
       other_interface_dofs = DoFTools::extract_boundary_dofs(other.dof_handler,
                                                              ComponentMask(),
                                                              {1});
@@ -193,6 +221,8 @@ Poisson2D::compute_interface_map(const Poisson2D &other) const
 
   // For each interface DoF on current subdomain, we find the corresponding one
   // on the other subdomain.
+  // Notice: this is a naive and inefficient implementation of the mapping, it
+  // could be done in a more efficient way.
   std::map<types::global_dof_index, types::global_dof_index> interface_map;
   for (const auto &dof_current : current_interface_dofs)
     {
@@ -201,6 +231,8 @@ Poisson2D::compute_interface_map(const Poisson2D &other) const
       types::global_dof_index nearest = *other_interface_dofs.begin();
       for (const auto &dof_other : other_interface_dofs)
         {
+		  // Notice: the mapping is based on proximity, so it's not a complete
+		  // overlapping of the meshes.
           if (p.distance_square(other.support_points.at(dof_other)) <
               p.distance_square(other.support_points.at(nearest)))
             nearest = dof_other;
@@ -218,4 +250,7 @@ Poisson2D::apply_relaxation(const Vector<double> &old_solution,
 {
   solution *= lambda;
   solution.add(1.0 - lambda, old_solution);
+  // Notice: this is a convoluted way to compute the relaxation; this is done to
+  // avoid creating temporary vectors which would be less efficient. These
+  // interfaces, despite being counterintuitive, are more efficient.
 }
