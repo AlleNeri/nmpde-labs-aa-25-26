@@ -1,9 +1,8 @@
-#include "my-DiffusionReaction.hpp"
+#include "DiffusionReaction.hpp"
 
-using namespace myDiffusionReaction;
+using namespace DiffusionReactionNamespace;
 
-void
-DiffusionReaction::setup()
+void DiffusionReaction::setup()
 {
   std::cout << "===============================================" << std::endl;
 
@@ -126,13 +125,13 @@ DiffusionReaction::assemble()
 				  // operation is `scalar_product`).
                   cell_matrix(i, j) += (  // Diffusion term
 										mu_loc *
-										fe_values.shape_grad(i, q) *
 										fe_values.shape_grad(j, q) *
+										fe_values.shape_grad(i, q) *
 										fe_values.JxW(q)
 									   ) + (  // Reaction term
 										sigma_loc *
-										fe_values.shape_value(i, q) *
 										fe_values.shape_value(j, q) *
+										fe_values.shape_value(i, q) *
 										fe_values.JxW(q)
 									   );
                 }
@@ -152,11 +151,10 @@ DiffusionReaction::assemble()
   // Dirichlet boundary conditions.
   {
     std::map<types::global_dof_index, double> boundary_values;
-    Functions::ZeroFunction<dim>			  bc_function;
+	FunctionG								  bc_function;
 
     std::map<types::boundary_id, const Function<dim> *> boundary_functions;
     boundary_functions[0] = &bc_function;
-    boundary_functions[1] = &bc_function;
 	boundary_functions[2] = &bc_function;
 	boundary_functions[3] = &bc_function;
 
@@ -167,6 +165,8 @@ DiffusionReaction::assemble()
     MatrixTools::apply_boundary_values(
       boundary_values, system_matrix, solution, system_rhs, true);
   }
+
+  // Homogeneous Neumann boundary conditions: do nothing.
 }
 
 void
@@ -174,9 +174,12 @@ DiffusionReaction::solve()
 {
   std::cout << "===============================================" << std::endl;
 
+  // Recall: if the convergence analysis doesn't show the expected rates, even
+  // if it should, one possible reason could be the solver tolerance. Decreasing
+  // it could help even if it could make the solver slower.
   ReductionControl solver_control(/* maxiter = */	1000,
-                                  /* tolerance = */ 1.0e-16,
-                                  /* reduce = */	1.0e-6);
+                                  /* tolerance = */ 1.0e-20,
+                                  /* reduce = */	1.0e-10);
 
   SolverCG<Vector<double>> solver(solver_control);
 
@@ -205,4 +208,40 @@ DiffusionReaction::output() const
   std::cout << "Output written to " << output_file_name << std::endl;
 
   std::cout << "===============================================" << std::endl;
+}
+
+double
+DiffusionReaction::compute_error(const VectorTools::NormType &norm_type,
+                                 const Function<dim> &exact_solution) const
+{
+  // The error is an integral, and we approximate that integral using a
+  // quadrature formula. To make sure we are accurate enough, we use a
+  // quadrature formula with one node more than what we used in assembly. This
+  // is done because, otherwise, it's possible that the error comes out to be
+  // smaller than the one one in a real world scenario. The additional
+  // quadrature point adds a "displacement" which prevents this issue.
+  const QGaussSimplex<dim> quadrature_error(r + 2);
+
+  // For triangular meshes, we need to explicitly provide a Mapping (the mapping
+  // between the reference element and the individual elements in the mesh) to
+  // integrate_difference. These two commands construct the most basic linear
+  // mapping.
+  FE_SimplexP<dim> fe_linear(1);
+  MappingFE        mapping(fe_linear);
+
+  // First we compute the norm of the error on each element.
+  Vector<double> error_per_cell(mesh.n_active_cells());
+  VectorTools::integrate_difference(mapping, // Mapping
+									dof_handler,  // Mesh
+                                    solution, // Numerical solution
+                                    exact_solution,	// Exact solution
+                                    error_per_cell, // Output vector
+                                    quadrature_error, // Quadrature
+                                    norm_type);	// Norm type
+
+  // Then, we add out all the cells.
+  const double error =
+    VectorTools::compute_global_error(mesh, error_per_cell, norm_type);
+
+  return error;
 }

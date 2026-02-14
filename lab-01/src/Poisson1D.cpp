@@ -270,6 +270,9 @@ Poisson1D::solve()
                                   /* reduce = */ 1.0e-6); // Relative tolerance
   // The relative tolerance is called "reduction" and it's normalized w.r.t. the
   // norm of the rhs.
+  // Recall: if the convergence analysis doesn't show the expected rates, even
+  // if it should, one possible reason could be the solver tolerance. Decreasing
+  // it could help even if it could make the solver slower.
 
   // Since the system matrix is symmetric and positive definite, we solve the
   // system using the conjugate gradient method.

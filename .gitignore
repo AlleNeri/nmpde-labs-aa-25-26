@@ -344,3 +344,9 @@ TSWLatexianTemp*
 #*Notes.bib
 
 *.pdf
+
+## Editors and IDEs ##############################################################
+
+# vim
+.vim
+.nvim.lua
